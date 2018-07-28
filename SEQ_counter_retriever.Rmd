@@ -1,0 +1,414 @@
+---
+title: "IUCN_analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r echo=FALSE,message=FALSE}
+library(rentrez)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(xtable)
+library(kableExtra)
+library(bold)
+library(sangerseqR)
+library(seqinr)
+
+# input csv file retrieved from the list of interest
+file_path <- "/home/sshekarriz/IUCNREDLIST/critically_endangered_marine/raw-tables/critically_endangered_marine_coastal.csv"
+#count of available species on NCBI> Not downloading the seq
+out_species_stat <- "/home/sshekarriz/IUCNREDLIST/critically_endangered_marine/sequence_counts/CR_marine_coastal.csv"
+# save Downloaded data in a dir of amplicon
+outSeq_ncbi <- "/home/sshekarriz/IUCNREDLIST/critically_endangered_marine/Coastal_NCBI/"
+outSeq_bold <- "/home/sshekarriz/IUCNREDLIST/critically_endangered_marine/Coastal_BOLD/"
+
+
+IUCN_table <- read.csv(file_path, stringsAsFactors = FALSE)
+IUCN_table$Taxa <- paste(IUCN_table$Genus, IUCN_table$Species, sep = " ") 
+IUCN_table$Taxa <- trimws(IUCN_table$Taxa, c("both"))
+#species <- as.character(DFO_table$Taxa)
+#filer Codium fragile for COI
+kable(IUCN_table[1:8], "html", caption = "Table 1: Criticall Endangered species, marine_Coastal") %>%
+  kable_styling(full_width = F, font_size = 12) %>%
+  scroll_box(width = "25cm", height = "10cm")
+
+```
+
+
+```{r echo=FALSE }
+Taxa_finder <- function(species, Vterm, path, output) {
+taxa.organ <- list()
+taxa.names <- list()
+taxa.search <- list()
+taxa.seqs <- list()
+file.names <- list()
+for(i in 1:length(species)){
+  taxa.organ[[ species[i] ]] <- paste(species[i], "[Organism]", sep = "")
+  taxa.names[[ species[i] ]] <- paste(taxa.organ[[i]], "AND", Vterm, sep = " ")
+  taxa.search[[ species[i] ]] <- entrez_search(db="nucleotide", term=taxa.names[[i]], use_history = TRUE)
+  if (taxa.search[[i]]$count > 1){
+  for( seq_start in seq(1,taxa.search[[i]]$count,150)){
+  taxa.seqs[[ species[i] ]] <- entrez_fetch(db="nuccore", web_history = taxa.search[[i]]$web_history,
+                       rettype="fasta", retmax=150, retstart=seq_start)
+  file.names[[ species[i] ]] <- paste(path, gsub(" ", "_", species[i]), sep = "")
+  write(taxa.seqs[[i]], file=paste(file.names[[i]], output, "fasta", sep = "."), append=TRUE)
+  }
+  } else if(taxa.search[[i]]$count == 1){
+    taxa.seqs[[ species[i] ]] <- entrez_fetch(db="nuccore", web_history = taxa.search[[i]]$web_history,
+                       rettype="fasta")
+    file.names[[ species[i] ]] <- paste(path, gsub(" ", "_", species[i]), sep = "")
+    write(taxa.seqs[[i]], file=paste(file.names[[i]], output, "fasta",sep = "."), append=TRUE)
+     
+   } else {
+    taxa.seqs[[ species[i] ]] <- "data is not present in Nucleotide database for this taxa"
+    file.names[[ species[i] ]] <- paste(path, gsub(" ", "_", species[i]), sep = "")
+    write(taxa.seqs[[i]], file=paste(file.names[[i]], output, "failed", "fasta", sep = "."), append=TRUE)
+  }
+ }
+}
+
+```
+
+```{r echo=FALSE }
+sequence_counter <- function(species, Vterm, seqLabel, outFILE) {
+taxa.organ <- list()
+taxa.names <- list()
+taxa.search <- list()
+taxa.count <- list()
+for(i in 1:length(species)){
+  taxa.organ[[ species[i] ]] <- paste(species[i], "[Organism]", sep = "")
+  taxa.names[[ species[i] ]] <- paste(taxa.organ[[i]], "AND", Vterm, sep = " ")
+  taxa.search[[ species[i] ]] <- entrez_search(db="nucleotide", term=taxa.names[[i]], use_history = TRUE)
+  taxa.count[[ species[i] ]] <- paste(species[[i]], taxa.search[[i]]$count, seqLabel, sep = "\t")
+    write(taxa.count[[i]], file=paste(outFILE), append=TRUE)
+ }
+}
+
+```
+
+
+```{r echo=FALSE}
+
+#######BOLD PACKAGE##########################################
+#bold_seq() > seqs
+#bold_specimens() > only specimen
+#bold_seqspec() > both seqs + speciemens
+############################################################
+#Below is a simple function that takes a data.frame that has a 
+#column name and seq and writes a fasta file from it
+writeFasta<-function(data, filename){
+  fastaLines = c()
+  for (rowNum in 1:nrow(data)){
+    fastaLines = c(fastaLines, as.character(paste(">", data[rowNum,"sampleid"], sep = "")))
+    fastaLines = c(fastaLines,as.character(data[rowNum,"nucleotides"]))
+  }
+  fileConn<-file(filename)
+  writeLines(fastaLines, fileConn)
+  close(fileConn)
+}
+#############################################################
+
+BOLD_retriever <- function(species, outFILE, path) {
+file.names <- list()
+bold.data <- list()
+taxa.fasta <- list()
+taxa.table <- list()
+bold.count <- list()
+for(i in 1:length(species)){
+  file.names[[ species[i] ]] <- paste(path, gsub(" ", "_", species[i]), sep = "")
+  bold.data[[species[i] ]] <- bold_seqspec(taxon = species[i])
+  if ((!is.na(bold.data[[i]])) ){
+       taxa.fasta [[species[i] ]] <- writeFasta(bold.data[[i]], paste(file.names[[i]], "fasta", sep = "."))
+       taxa.table[[ species[i] ]] <- write.csv(bold.data[[i]], paste(file.names[[i]], "table", sep = "."))
+       bold.count[[ species[i] ]] <- paste(species[[i]], nrow(bold.data[[i]]), "BOLD", sep = "\t")
+       write(bold.count[[i]], file=paste(outFILE), append=TRUE)
+  } else {
+        failtext = "NO DATA AVAILABLE FOR THIS TAXON IN BOLD!...SORRY :( "
+        taxa.table[[species[i] ]] <- write.csv(failtext, paste(file.names[[i]], "failed", sep = "."))
+        bold.count[[ species[i] ]] <- paste(species[[i]], 0, "BOLD", sep = "\t")
+        write(bold.count[[i]], file=paste(outFILE), append=TRUE)
+  }
+  
+ }
+}
+
+```
+
+## Summary of available species-level data:
+Comparison of available markers per species 
+```{r echo=FALSE, fig.show='hold', fig.align="center", fig.width=20, fig.height=20, error=FALSE, message=FALSE, warning=FALSE}
+
+COIterm <- "(cox1[gene] OR coxI[gene] OR CO1[gene] OR COI[gene] OR cytochrome c oxidase subunit I[all] OR cytochrome oxidase subunit I[all] OR cytochrome c oxidase subunit 1[all] OR cytochrome oxidase subunit 1[all]) AND 300:1500[Sequence Length] NOT pseudogene NOT unverified"
+Mitoterm <- "(mitochondrion complete genome OR complete mitochondrial genome) NOT pseudogene NOT unverified NOT host"
+G28term <- "(28S[gene] OR 28S rRNA[all] OR 28S rRNA[gene] OR 28S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host"
+G18term <- "(18S[gene] OR 18S rRNA[all] OR 18S rRNA[gene] OR 18S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host NOT uncultured marine eukaryote NOT PREDICTED"
+G16term <- "(16S[gene] OR 16S rRNA[gene] OR 16S rRNA[all] OR 16S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host NOT Bacteria"
+GCYTBterm <- "(CYTB[gene] OR cytochrome b[gene] OR CYTB[all] OR cytochrome b[all]) NOT pseudogene NOT unverified NOT host NOT Bacteria NOT shotgun sequence"
+GITSterm <- "(Internal transcribed spacer[all] OR ITS2[gene] OR ITS1[gene] OR ITS1[ALL] ITS2[ALL]) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+Grbclterm <- "(rbcL[gene] OR rbcl[all]) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+MitoSeqterm <- "mitochondrial AND 300:150000[Sequence Length] NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+ntSeqterm <- "300:100000[Sequence Length] NOT pseudogene NOT unverified NOT host NOT clone NOT environ NOT shotgun sequence"
+G12term <- "(12S[gene] OR 12S rRNA[all] OR 12S rRNA[gene]) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+
+sequence_counter(unique(IUCN_table$Taxa), Mitoterm, "Mitogenome", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), COIterm, "COI", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), G28term, "28S", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), G18term, "18S", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), G16term, "16S", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), GCYTBterm, "CYTB", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), GITSterm, "ITS", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), Grbclterm, "rbcl", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), MitoSeqterm, "Mitoseq", out_species_stat)
+sequence_counter(unique(IUCN_table$Taxa), ntSeqterm, "nt", out_species_stat)
+
+##Download from BOLD
+BOLD_retriever(IUCN_table$Taxa, out_species_stat, outSeq_bold)
+
+```
+
+
+```{r echo=FALSE, fig.show='hold', fig.align="center", fig.width=20, fig.height=25}
+
+IUCN_spCount <- read.csv(out_species_stat, sep = "\t", header = FALSE)
+colnames(IUCN_spCount) <- c("taxa", "accesions", "Seqlabel")
+IUCN_spCount_w <- spread(IUCN_spCount, Seqlabel, accesions)
+kable(IUCN_spCount_w, "html", caption = "Available accesions per species") %>%
+ kable_styling(full_width = F, font_size = 14) %>%
+  scroll_box(width = "25cm", height = "10cm")
+
+## making a plot for species-level data
+IUCN_spCount$Seqlabel <- factor(IUCN_spCount$Seqlabel, levels = c("16S", "18S", "28S", "ITS", "rbcl", "CYTB", "Mitogenome", "COI", "BOLD", "Mitoseq", "nt"))
+ggplot(IUCN_spCount, aes(Seqlabel, log(accesions), group=1)) +
+  geom_point() + geom_line() + facet_wrap(~taxa) + theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title.x = element_blank()) 
+
+```
+
+
+```{r echo=FALSE, fig.show='hold', fig.align="center", fig.width=15, fig.height=10}
+IUCN_spCount_zero <- 
+  IUCN_spCount %>% filter(accesions <= 0) %>%
+  rename(c('taxa'='Taxa')) %>%
+  left_join(IUCN_table, by = "Taxa")
+
+
+
+ggplot(IUCN_spCount_zero, aes(x=Seqlabel, fill=Phylum)) + 
+  geom_bar() +
+  scale_fill_manual(values = colours1) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), 
+        legend.position="top",
+        #legend.position="none",
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 20),
+        axis.text.x = element_text(size = 20, angle = 35),
+        strip.text.x = element_text(size = 10)) + 
+  guides(fill = guide_legend(reverse = TRUE, keywidth = 2, keyheight = 2)) +
+   labs(title = "Number of not available taxa (Phylum)")
+
+ggplot(IUCN_spCount_zero, aes(x=Seqlabel, fill=Class)) + 
+  geom_bar() +
+  scale_fill_manual(values = colours1) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), 
+        #legend.position="top",
+        #legend.position="none",
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 20),
+        axis.text.x = element_text(size = 20, angle = 35),
+        strip.text.x = element_text(size = 10)) + 
+  guides(fill = guide_legend(reverse = TRUE, keywidth = 2, keyheight = 2)) +
+  labs(title = "Number of not available taxa (Class)")
+
+
+IUCN_spCount_present <- 
+  IUCN_spCount %>% filter(accesions >= 1) %>%
+  rename(c('taxa'='Taxa')) %>%
+  left_join(IUCN_table, by = "Taxa")
+
+ggplot(IUCN_spCount_present, aes(x=Seqlabel, fill=Phylum)) + 
+  geom_bar() +
+  scale_fill_manual(values = colours1) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), 
+        #legend.position="top",
+        #legend.position="none",
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 20),
+        axis.text.x = element_text(size = 20, angle = 35),
+        strip.text.x = element_text(size = 10)) + 
+  guides(fill = guide_legend(reverse = TRUE, keywidth = 2, keyheight = 2)) +
+   labs(title = "Number of available taxa (Phylum)")
+
+ggplot(IUCN_spCount_present, aes(x=Seqlabel, fill=Class)) + 
+  geom_bar() +
+  scale_fill_manual(values = colours1) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), 
+        #legend.position="top",
+        #legend.position="none",
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 20),
+        axis.text.x = element_text(size = 20, angle = 35),
+        strip.text.x = element_text(size = 10)) + 
+  guides(fill = guide_legend(reverse = TRUE, keywidth = 2, keyheight = 2)) +
+   labs(title = "Number of available taxa (Class)")
+
+```
+
+
+
+
+
+
+
+
+### Mitochondrial genomes:
+A fasta file contains all the available mitochondrial complete genomes created per taxa
+Here are the number of genome accessions per taxa (Table 2, and Figure 2)
+```{r echo=FALSE, message=FALSE}
+Mitoterm <- "(mitochondrion complete genome OR complete mitochondrial genome) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+IUCN_spCount_w_Mitogenome <- IUCN_spCount_w %>% filter(Mitogenome >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_Mitogenome$taxa), Mitoterm, outSeq_ncbi, "OUT.Mitogenome")
+```
+
+### COI sequences:
+A fasta file contains all the available COI seqs created per taxa using Taxa_finder(). Table 1 and Figure 1 show the total number of
+accesions available for COI barcode.
+```{r, echo=FALSE, message=FALSE}
+COIterm <- "(cox1[gene] OR coxI[gene] OR CO1[gene] OR COI[gene] OR cytochrome c oxidase subunit I[all] OR cytochrome oxidase subunit I[all] OR cytochrome c oxidase subunit 1[all] OR cytochrome oxidase subunit 1[all]) AND 300:1500[Sequence Length] NOT pseudogene NOT unverified NOT shotgun sequence NOT host"
+if (sum(IUCN_spCount_w$COI) >= 1) {
+IUCN_spCount_w_COI <- IUCN_spCount_w %>% filter(COI >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_COI$taxa), COIterm, outSeq_ncbi, "OUT.COI")
+} else {
+  print("NO COI data available")
+}
+
+```
+
+## 28S sequences:
+A fasta file contains all the available 28S seqs created per taxa using Taxa_finder()
+here is the number of 28S accessions per taxa:
+```{r , echo=FALSE, message=FALSE}
+G28term <- "(28S[gene] OR 28S rRNA[all] OR 28S rRNA[gene] OR 28S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+if (sum(IUCN_spCount_w$`28S`) >= 1) {
+IUCN_spCount_w_28S <- IUCN_spCount_w %>% filter(`28S` >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_28S$taxa), G28term, outSeq_ncbi, "OUT.28S")
+} else {
+  print("NO 28S data available")
+}
+```
+
+## 18S sequences:
+A fasta file contains all the available 28S seqs created per taxa using Taxa_finder()
+here is the number of 18S accessions per taxa:
+```{r , echo=FALSE, message=FALSE}
+G18term <- "(18S[gene] OR 18S rRNA[all] OR 18S rRNA[gene] OR 18S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host NOT uncultured marine eukaryote NOT PREDICTED"
+if (sum(IUCN_spCount_w$`18S`) >= 1) {
+IUCN_spCount_w_18S <- IUCN_spCount_w %>% filter(`18S` >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_18S$taxa), G18term, outSeq_ncbi, "OUT.18S")
+} else {
+  print("No 18S data available")
+}
+```
+
+## 16S sequences:
+A fasta file contains all the available 16S seqs created per taxa using Taxa_finder()
+here is the number of 16S accessions per taxa:
+```{r , echo=FALSE, message=FALSE}
+G16term <- "(16S[gene] OR 16S rRNA[gene] OR 16S rRNA[all] OR 16S ribosomal RNA[all]) NOT pseudogene NOT unverified NOT host NOT Bacteria"
+if (sum(IUCN_spCount_w$`16S`) >= 1) {
+IUCN_spCount_w_16S <- IUCN_spCount_w %>% filter(`16S` >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_16S$taxa), G16term, outSeq_ncbi, "OUT.16S")
+} else {
+  print("No 16S data available")
+}
+```
+
+## CYTB sequences:
+A fasta file contains all the available CYTB seqs created per taxa using Taxa_finder()
+here is the number of cytb accessions per taxa:
+
+```{r , echo=FALSE, message=FALSE}
+GCYTBterm <- "(CYTB[gene] OR cytochrome b[gene] OR CYTB[all] OR cytochrome b[all]) NOT pseudogene NOT unverified NOT host NOT Bacteria"
+
+if (sum(IUCN_spCount_w$CYTB) >= 1) {
+IUCN_spCount_w_CYTB <- IUCN_spCount_w %>% filter(CYTB >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_CYTB$taxa), GCYTBterm, outSeq_ncbi, "OUT.CYTB")
+} else {
+  print("No CYTB data available")
+} 
+
+```
+
+## ITS sequence
+
+A fasta file contains all the available ITS seqs created per taxa using Taxa_finder()
+here is the number of ITS accessions per taxa:
+
+```{r , echo=FALSE, message=FALSE}
+GITSterm <- "(Internal transcribed spacer[all] OR ITS2[gene] OR ITS1[gene] OR ITS1[ALL] ITS2[ALL]) NOT pseudogene NOT unverified NOT host"
+
+if (sum(IUCN_spCount_w$ITS) >= 1) {
+IUCN_spCount_w_ITS <- IUCN_spCount_w %>% filter(ITS >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_ITS$taxa), GITSterm, outSeq_ncbi, "OUT.ITS")
+} else {
+  print("No ITS data available")
+}
+
+```
+
+## rbcl sequence
+
+```{r , echo=FALSE, message=FALSE}
+Grbclterm <- "(rbcL[gene] OR rbcl[all]) NOT pseudogene NOT unverified NOT host NOT shotgun sequence"
+
+if (sum(IUCN_spCount_w$rbcl) >= 1) {
+IUCN_spCount_w_rbcl <- IUCN_spCount_w %>% filter(rbcl >= 1)
+Taxa_finder(as.character(IUCN_spCount_w_ITS$taxa), Grbclterm, outSeq_ncbi, "OUT.rbcl")
+} else {
+  print("No rbcl data available")
+}
+
+```
+
+
+#Downloaded data
+
+```{bash eval=FALSE, echo=FALSE}
+cd /home/sshekarriz/IUCNREDLIST/IUCN_storedSeqs/CR/marine_neritic/
+#ls -l *fasta
+grep -c "^>" *fasta > CR_marine_neritic_stats.txt 
+```
+
+```{r eval=FALSE, echo=FALSE, fig.align="center", fig.width=15, fig.height=15}
+# make a plot of retrieved data:
+dfo_coi <- read.csv("/home/sshekarriz/IUCNREDLIST/IUCN_storedSeqs/CR/marine_neritic/CR_marine_neritic_stats.txt", sep = ":", header = FALSE)
+colnames(dfo_coi) <- c("taxa", "accesions")
+dfo_coi$taxa <- as.character(dfo_coi$taxa)
+dfo_coi$taxa <- gsub(".fasta", "", dfo_coi$taxa)
+dfo_coi_clean <- dfo_coi %>% separate(taxa, c("species", "suffix"), ".OUT.") 
+# making a table using kableExtra and knitr package
+kable(dfo_coi_clean, "html", caption = "Table 2: Downloaded data") %>%
+  scroll_box(width = "20cm", height = "8cm") %>%
+  kable_styling(full_width = F, font_size = 15)
+# geom_line() plot
+ggplot(dfo_coi_clean, aes(species,log(accesions), group = 1)) +
+  geom_point() + geom_line() +
+  facet_wrap(~suffix) +
+  labs(title = "Figure 1: Available seqs") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title.x = element_blank()) 
+
+```
+
+
+
+
+
+
+
+
